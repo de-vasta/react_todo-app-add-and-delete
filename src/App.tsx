@@ -1,5 +1,3 @@
-/* eslint-disable jsx-a11y/label-has-associated-control */
-/* eslint-disable jsx-a11y/control-has-associated-label */
 import React, {
   useCallback,
   useEffect,
@@ -14,26 +12,21 @@ import Todos from './components/Todos/Todos';
 import cn from 'classnames';
 import TodoHeader from './components/TodoHeader/TodoHeader';
 import TodoFooter from './components/TodoFooter/TodoFooter';
-import { FilterStatus } from './types/enums';
+import { ErrorMessage, FilterStatus } from './types/enums';
 import TodoItem from './components/TodoItem/TodoItem';
-
-enum ErrorMessage {
-  None = '',
-  LoadTodos = 'Unable to load todos',
-  EmptyTitle = 'Title should not be empty',
-  AddTodo = 'Unable to add a todo',
-  DeleteTodo = 'Unable to delete a todo',
-  UpdateTodo = 'Unable to update a todo',
-}
+import { getVisibleTodos } from './helpers/todoHelpers';
+import { CSSTransition } from 'react-transition-group';
 
 export const App: React.FC = () => {
+  const transitionTimeout = 300;
+
   const [todos, setTodos] = useState<Todo[]>([]);
   const [tempTodo, setTempTodo] = useState<Todo | null>(null);
   const [filterStatus, setFilterStatus] = useState<FilterStatus>(
     FilterStatus.All,
   );
   const [errorMsg, setErrorMsg] = useState<ErrorMessage>(ErrorMessage.None);
-  const [deletingTodoIds, setDeletingTodoIds] = useState<number[]>([]);
+  const [todosToDeleteIds, setTodosToDeleteIds] = useState<number[]>([]);
 
   const errorMsgTimeOutId = useRef<number>(0);
   const inputFocusRef = useRef<HTMLInputElement>(null);
@@ -46,6 +39,10 @@ export const App: React.FC = () => {
       setErrorMsg(() => ErrorMessage.None);
     }, 3000);
   };
+
+  useEffect(() => {
+    inputFocusRef.current?.focus();
+  }, []);
 
   useEffect(() => {
     getTodos()
@@ -70,57 +67,46 @@ export const App: React.FC = () => {
     [todos],
   );
 
-  const handleTodoDelete = useCallback(
-    (todoId: number) => {
-      setDeletingTodoIds(prev => [...prev, todoId]);
+  function toggleDisableInput(shouldDisable: boolean = true) {
+    if (inputFocusRef.current) {
+      inputFocusRef.current.disabled = shouldDisable;
+    }
+  }
 
-      return deleteTodo(todoId)
-        .then(() => {
-          setErrorMsg(() => ErrorMessage.None);
-          setTodos(todos.filter(todo => todo.id !== todoId));
-        })
-        .catch(error => {
-          handleErrorMessage(ErrorMessage.DeleteTodo);
-          setDeletingTodoIds(prev => prev.filter(id => id !== todoId));
+  const handleTodoDelete = useCallback((todoId: number) => {
+    setTodosToDeleteIds(delIds => [...delIds, todoId]);
 
-          throw error;
-        })
-        .finally(() => {
-          setDeletingTodoIds(prev => prev.filter(id => id !== todoId));
-          inputFocusRef.current?.focus();
-        });
-    },
-    [todos],
-  );
+    toggleDisableInput();
 
-  const handleClearCompleted = () => {
-    const completedTodos = todos.filter(todo => todo.completed);
-    const completedIds = completedTodos.map(todo => todo.id);
-    const successfulDeletedIds: number[] = [];
-
-    setDeletingTodoIds(completedIds);
-
-    Promise.all(
-      completedTodos.map(todo =>
-        deleteTodo(todo.id)
-          .then(() => successfulDeletedIds.push(todo.id))
-          .catch(() => {
-            handleErrorMessage(ErrorMessage.DeleteTodo);
-          }),
-      ),
-    )
+    return deleteTodo(todoId)
       .then(() => {
-        setTodos(oldTodos =>
-          oldTodos.filter(todo => !successfulDeletedIds.includes(todo.id)),
-        );
+        setErrorMsg(() => ErrorMessage.None);
+        setTodos(prev => prev.filter(todoItem => todoItem.id !== todoId));
+      })
+      .catch(() => {
+        handleErrorMessage(ErrorMessage.DeleteTodo);
+
+        return Promise.reject();
       })
       .finally(() => {
-        setDeletingTodoIds([]);
+        setTodosToDeleteIds(delIds => delIds.filter(id => id !== todoId));
+        toggleDisableInput(false);
         inputFocusRef.current?.focus();
       });
+  }, []);
+
+  const handleClearCompleted = () => {
+    const completedTodos = todos.filter(todoItem => todoItem.completed);
+
+    Promise.all(
+      completedTodos.map(completed => {
+        return handleTodoDelete(completed.id);
+      }),
+    );
   };
 
   const handleTodoAdd = (title: string) => {
+    // TODO: remove normalization?
     const titleNormalized = title.trim();
 
     if (!titleNormalized) {
@@ -137,6 +123,7 @@ export const App: React.FC = () => {
     };
 
     setTempTodo(todoToAdd);
+    toggleDisableInput(true);
 
     return addTodo(todoToAdd)
       .then(todoResponse => {
@@ -145,7 +132,7 @@ export const App: React.FC = () => {
           ...currState,
           {
             ...todoResponse,
-            id: Math.max(...currState.map(todo => todo.id)) + 1,
+            id: Date.now(),
           },
         ]);
       })
@@ -156,6 +143,8 @@ export const App: React.FC = () => {
       })
       .finally(() => {
         setTempTodo(null);
+        toggleDisableInput(false);
+        inputFocusRef.current?.focus();
       });
   };
 
@@ -163,19 +152,10 @@ export const App: React.FC = () => {
     setFilterStatus(filter);
   };
 
-  const visibleTodos = useMemo(() => {
-    switch (filterStatus) {
-      case FilterStatus.Active:
-        return todos.filter(todo => !todo.completed);
-
-      case FilterStatus.Completed:
-        return todos.filter(todo => todo.completed);
-
-      case FilterStatus.All:
-      default:
-        return todos;
-    }
-  }, [todos, filterStatus]);
+  const visibleTodos = useMemo(
+    () => getVisibleTodos(todos, filterStatus),
+    [todos, filterStatus],
+  );
 
   const undoneTodosCount = useMemo(
     () => todos.reduce((acc, todo) => (todo.completed ? acc : acc + 1), 0),
@@ -210,10 +190,15 @@ export const App: React.FC = () => {
           todos={visibleTodos}
           handleTodoToggle={handleTodoToggle}
           handleTodoRemove={handleTodoDelete}
-          deletingTodoIds={deletingTodoIds}
+          deletingTodoIds={todosToDeleteIds}
+          transitionTimeout={transitionTimeout}
         />
 
-        {tempTodo && <TodoItem todo={tempTodo} hasTempTodo={!!tempTodo} />}
+        {tempTodo && (
+          <CSSTransition timeout={300} classNames={'temp-item'}>
+            <TodoItem todo={tempTodo} hasTempTodo={Boolean(tempTodo)} />
+          </CSSTransition>
+        )}
 
         {todos.length > 0 && (
           <TodoFooter

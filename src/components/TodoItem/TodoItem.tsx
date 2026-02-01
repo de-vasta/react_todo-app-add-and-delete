@@ -1,13 +1,12 @@
 import classNames from 'classnames';
 import { Todo } from '../../types/Todo';
-import { useState } from 'react';
 
 interface Props {
   todo: Todo;
   onToggle?: (todoId: number) => void;
   onTodoRemove?: (todoId: number) => Promise<void>;
   hasTempTodo?: boolean;
-  isBeingDeleted?: boolean;
+  isToDelete?: boolean;
 }
 
 const TodoItem = ({
@@ -15,12 +14,9 @@ const TodoItem = ({
   onToggle,
   onTodoRemove,
   hasTempTodo = false,
-  isBeingDeleted = false,
+  isToDelete = false,
 }: Props) => {
-  const [isDeleting, setIsDeleting] = useState(false);
-
   const handleDelete = (todoId: number) => {
-    setIsDeleting(() => true);
     onTodoRemove?.(todoId);
   };
 
@@ -50,13 +46,13 @@ const TodoItem = ({
         data-cy="TodoDelete"
         onClick={() => handleDelete(id)}
       >
-        {isDeleting ? '···' : '×'}
+        {isToDelete ? '···' : '×'}
       </button>
 
       <div
         data-cy="TodoLoader"
         className={classNames('modal overlay', {
-          'is-active': isDeleting || hasTempTodo || isBeingDeleted,
+          'is-active': hasTempTodo || isToDelete,
         })}
       >
         <div className="modal-background has-background-white-ter" />
